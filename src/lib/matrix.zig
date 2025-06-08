@@ -10,8 +10,6 @@ const Matrix = struct {
     arena: std.heap.ArenaAllocator,
 
     pub fn init(num_cols: usize) !Matrix {
-        // TODO: Deal with case where num_cols == max(usize). In that case we can't allocate all of the memory we need.
- 
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
         var columns = try arena.allocator().alloc(Node, num_cols);
@@ -43,30 +41,60 @@ const Matrix = struct {
         self.arena.deinit();
     }
 
-    // pub fn set(self: Matrix, row_index: usize, col_index: usize) !void {
-    //     const col = try self.header[col_index + 1];    
-    //     const row = col.down;
-    //     while (row != col) : (row = row.down) {
-    //         // See if the location is already set.
-    //         if (row.id == row) {
-    //             return;
-    //         }
-    //
-    //         // If we encounter a row node with id > than row_index, we insert above it.
-    //         if (row.id > row_index) {
-    //             const new_node = try self.arena.allocator().create(Node);  
-    //             // new_node.* = .{
-    //             //     .up = row.up,
-    //             //     .down = row,
-    //             //     .left = ...,
-    //             //     .right = ...,
-    //             //     .column = row.column,
-    //             //     .id = row_index,
-    //             //     count = 0,
-    //             // }
-    //         }
-    //     }
-    // }
+    /// Ensure that row_index/col_index is included in the matrix.
+    pub fn set(self: Matrix, row_index: usize, col_index: usize) !void {
+        const col = try self.columns[col_index];
+        const row = col.down;
+        while (row != col) : (row = row.down) {
+            // See if the location is already set.
+            if (row.id == row) {
+                return;
+            }
+
+            // If we encounter a row node with id > than row_index, we insert above it.
+            if (row.id > row_index) {
+                const new_node: *Node = try self.arena.allocator().create(Node);  
+                new_node.* = .{
+                    .up = row.up,
+                    .down = row,
+                    .left = undefined,
+                    .right = undefined,
+                    .column = row.column,
+                    .id = row_index,
+                    .count = 0,
+                };
+
+                new_node.left = new_node;
+                new_node.right = new_node;
+
+                const left = try self.find_left(col_index, row_index);
+                if (left != null) {
+                    new_node.left = left;
+                    new_node.right = left.right;
+                    left.right.left = new_node;
+                    left.right = new_node;
+                }
+            }
+        }
+    }
+
+    /// Find the node that should be the 'left' of the node at col_index/row_index.
+    fn find_left(self: Matrix, column_index: usize, row_index: usize) !?*Node {
+        const start_col = try self.columns[column_index];
+        var column = start_col.left;
+        while (column != start_col) : (column = column.left) {
+            var row = column.down;
+            while (row != column) : (row = row.down) {
+                if (row.id == row_index) {
+                    return row;
+                }
+                else if (row.id > row_index) {
+                    break;
+                }
+            }
+        }
+        return null;
+    }
 };
 
 test "construct" {
