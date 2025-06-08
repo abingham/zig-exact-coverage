@@ -16,17 +16,24 @@ pub const Node = struct {
     id: usize,
     count: usize,
 
-    // pub fn init(x: f32, y: f32, z: f32) Vec3 {
-    //     return Vec3{
-    //         .x = x,
-    //         .y = y,
-    //         .z = z,
-    //     };
-    // }
-    //
-    // pub fn dot(self: Vec3, other: Vec3) f32 {
-    //     return self.x * other.x + self.y * other.y + self.z * other.z;
-    // }
+    /// Create a Node that refers to itself, with id=0 and count=0.
+    pub fn init() Node {
+        var node: Node =  .{
+            .up = undefined,
+            .down = undefined,
+            .left = undefined,
+            .right = undefined,
+            .column = undefined,
+            .id = 0,
+            .count = 0,
+        };
+        node.up = &node;
+        node.down = &node;
+        node.left = &node;
+        node.right = &node;
+        node.column = &node;
+        return node;
+    }
 };
 
 fn solve(header: *Node, solution: *ArrayList(usize)) bool {
