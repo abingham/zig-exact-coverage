@@ -1,5 +1,4 @@
 pub const matrix = @import("matrix.zig");
-pub const dlx = @import("dlx/root.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());
