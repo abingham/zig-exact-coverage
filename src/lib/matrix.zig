@@ -4,6 +4,11 @@ const Node = node.Node;
 const std = @import("std");
 const testing = std.testing;
 
+const Index = struct {
+    row: usize,
+    col: usize,
+};
+
 const Matrix = struct {
     header: *Node,
     columns: []Node,
@@ -42,8 +47,8 @@ const Matrix = struct {
     }
 
     /// Ensure that row_index/col_index is included in the matrix.
-    pub fn set(self: Matrix, row_index: usize, col_index: usize) !void {
-        const col = try self.columns[col_index];
+    pub fn set(self: Matrix, index: Index) !void {
+        const col = try self.columns[index.col];
         const row = col.down;
         while (row != col) : (row = row.down) {
             // See if the location is already set.
@@ -52,7 +57,7 @@ const Matrix = struct {
             }
 
             // If we encounter a row node with id > than row_index, we insert above it.
-            if (row.id > row_index) {
+            if (row.id > index.row) {
                 const new_node: *Node = try self.arena.allocator().create(Node);  
                 new_node.* = .{
                     .up = row.up,
@@ -60,14 +65,14 @@ const Matrix = struct {
                     .left = undefined,
                     .right = undefined,
                     .column = row.column,
-                    .id = row_index,
+                    .id = index.row,
                     .count = 0,
                 };
 
                 new_node.left = new_node;
                 new_node.right = new_node;
 
-                const left = try self.find_left(col_index, row_index);
+                const left = try self.find_left(index);
                 if (left != null) {
                     new_node.left = left;
                     new_node.right = left.right;
@@ -79,16 +84,16 @@ const Matrix = struct {
     }
 
     /// Find the node that should be the 'left' of the node at col_index/row_index.
-    fn find_left(self: Matrix, column_index: usize, row_index: usize) !?*Node {
-        const start_col = try self.columns[column_index];
+    fn find_left(self: Matrix, index: Index) !?*Node {
+        const start_col = try self.columns[index.col];
         var column = start_col.left;
         while (column != start_col) : (column = column.left) {
             var row = column.down;
             while (row != column) : (row = row.down) {
-                if (row.id == row_index) {
+                if (row.id == index.row) {
                     return row;
                 }
-                else if (row.id > row_index) {
+                else if (row.id > index.row) {
                     break;
                 }
             }
