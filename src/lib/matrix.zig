@@ -20,32 +20,47 @@ pub const Matrix = struct {
     columns: []Node,
     arena: std.heap.ArenaAllocator,
 
-    pub fn init(num_cols: usize) !Matrix {
-        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    fn left_col(columns: []Node, index: usize) *Node {
+        return if (index == 0) &columns[columns.len - 1] else &columns[index - 1];
+    }
 
-        var columns = try arena.allocator().alloc(Node, num_cols);
+    fn right_col(columns: []Node, index: usize) *Node {
+        return if (index == columns.len - 1) &columns[0] else &columns[index + 1];
+    }
+    pub fn init(num_cols: usize, ext_allocator: std.mem.Allocator) !Matrix {
+        var arena = std.heap.ArenaAllocator.init(ext_allocator);
+        var allocator = arena.allocator();
 
-        var header = try arena.allocator().create(Node);
-        header.* = Node.init();
-        header.right = &columns[0];
-        header.left = &columns[num_cols - 1];
-        header.up = header;
-        header.down = header;
-        header.column = header;
+        const columns = try allocator.alloc(Node, num_cols);
 
+        // Initialize all of the nodes.
         var index: usize = 0;
         while (index < num_cols) : (index += 1) {
-            columns[index] = Node{
-                .up = &columns[index],
-                .down = &columns[index],
-                .left = if (index == 0) header else &columns[index - 1],
-                .right = if (index == num_cols - 1) header else &columns[index + 1],
-                .column = &columns[index],
-                .count = 0,
-                .id = index,
-            };
+            columns[index].init();
         }
-        return .{ .header = header, .columns = columns, .arena = arena };
+
+        // Point all of the column nodes at their neighbors.
+        index = 0;
+        while (index < num_cols) : (index += 1) {
+            var col_node: *Node = &columns[index];
+            const left_node: *Node = left_col(columns, index);
+            const right_node: *Node = right_col(columns, index);
+
+            col_node.insert_h(left_node, right_node);
+
+            col_node.id = index;
+
+            assert(col_node.left == left_node);
+            assert(col_node.right == right_node);
+            assert(right_node.left == col_node);
+            assert(left_node.right == col_node);
+        }
+
+        // Create the header node and stick it between the two end column nodes.
+        const header_node = try Node.create(allocator);
+        header_node.insert_h(&columns[num_cols - 1], &columns[0]);
+
+        return .{ .header = header_node, .columns = columns, .arena = arena };
     }
 
     pub fn deinit(self: Matrix) void {
@@ -77,40 +92,33 @@ pub const Matrix = struct {
 
     /// Ensure that row_index/col_index is included in the matrix.
     pub fn set(self: *Matrix, index: Index) !void {
-        const col = &self.columns[index.col];
-        var row = col.down;
-        while (row != col) : (row = row.down) {
+        const col_node = &self.columns[index.col];
+        var row_node = col_node.down;
+        while (row_node != col_node) : (row_node = row_node.down) {
             // See if the location is already set.
-            if (row.id == index.row) {
+            if (row_node.id == index.row) {
                 return;
             }
 
             // If we encounter a row node with id > than row_index, we insert above it.
-            if (row.id > index.row) {
+            if (row_node.id > index.row) {
                 break;
             }
         }
 
-        var new_node: *Node = try self.arena.allocator().create(Node);
-        new_node = Node.init();
-        new_node.up = row.up;
-        new_node.down = row;
-        new_node.column = row.column;
+        // Create the new node.
+        var new_node: *Node = try Node.create(self.arena.allocator());
+
+        // Insert it above the row we found in the loop above.
+        new_node.insert_v(row_node.up, row_node);
+        new_node.column = row_node.column;
         new_node.id = index.row;
-        new_node.count = 0;
 
-        // initially the node refers to itself in the row.
-        new_node.left = new_node;
-        new_node.right = new_node;
-
+        // Find the node that is to the left of the new node in its row.
         const left = self.find_left(index) catch new_node;
-        new_node.left = left;
-        new_node.right = left.right;
-        left.right.left = new_node;
-        left.right = new_node;
 
-        row.up.down = new_node; 
-        row.up = new_node;
+        // Insert to the right of that node.
+        new_node.insert_h(left, left.right);
     }
 
     /// Find the node that should be the 'left' of the node at col_index/row_index.
@@ -133,8 +141,11 @@ pub const Matrix = struct {
 };
 
 test "basic structure after initialization" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+
     const num_cols: usize = 10;
-    const matrix = try Matrix.init(num_cols);
+    const matrix = try Matrix.init(num_cols, allocator);
     defer matrix.deinit();
     try testing.expect(matrix.columns.len == num_cols);
 
@@ -151,19 +162,28 @@ test "basic structure after initialization" {
         try testing.expect(col_node.down == col_node);
         try testing.expect(col_node.column == col_node);
 
+        if (col == 0) {
+            try testing.expect(col_node.left == matrix.header);
+        } else {
+            try testing.expect(col_node.left == &matrix.columns[col - 1]);
+        }
         try testing.expect(col_node.left == if (col == 0) matrix.header else &matrix.columns[col - 1]);
         try testing.expect(col_node.right == if (col == num_cols - 1) matrix.header else &matrix.columns[col + 1]);
     }
 }
 
 test "get is false for unset indexes" {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+
     const num_cols = 10;
     const num_rows = 10;
-    const matrix = try Matrix.init(num_cols);
+    const matrix = try Matrix.init(num_cols, allocator);
     defer matrix.deinit();
 
     var col: usize = 0;
-    while (col != num_cols) : (col += 1){
+    while (col != num_cols) : (col += 1) {
         var row: usize = 0;
         while (row != num_rows) : (row += 1) {
             try testing.expect(!matrix.get(Index.create(row, col)));
@@ -172,26 +192,33 @@ test "get is false for unset indexes" {
 }
 
 test "structure after set r0, c0" {
-    var matrix = try Matrix.init(10);
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var matrix = try Matrix.init(10, allocator);
     defer matrix.deinit();
 
     try matrix.set(Index.create(0, 0));
 
     const inserted = matrix.columns[0].down;
+    const col = &matrix.columns[0];
 
-    try testing.expect(matrix.columns[0].down == inserted);
-    try testing.expect(matrix.columns[0].up == inserted);
-    try testing.expect(matrix.columns[0].down.up == &matrix.columns[0]);
-    try testing.expect(matrix.columns[0].up.down == &matrix.columns[0]);
+    try testing.expect(col.down == inserted);
+    try testing.expect(col.up == inserted);
+    try testing.expect(col.down.up == col);
+    try testing.expect(col.up.down == col);
 
-    try testing.expect(inserted.up == &matrix.columns[0]);
-    try testing.expect(inserted.down == &matrix.columns[0]);
+    try testing.expect(inserted.up == col);
+    try testing.expect(inserted.down == col);
     try testing.expect(inserted.down.up == inserted);
     try testing.expect(inserted.up.down == inserted);
 }
 
 test "structure after set r0,c0 followed by r4,c0" {
-    var matrix = try Matrix.init(10);
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var matrix = try Matrix.init(10, allocator);
     defer matrix.deinit();
 
     try matrix.set(Index.create(0, 0));
@@ -218,7 +245,10 @@ test "structure after set r0,c0 followed by r4,c0" {
 }
 
 test "structure after set r3,c1 followed by r3,c6" {
-    var matrix = try Matrix.init(10);
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var matrix = try Matrix.init(10, allocator);
     defer matrix.deinit();
 
     try matrix.set(Index.create(3, 1));
@@ -249,7 +279,10 @@ test "structure after set r3,c1 followed by r3,c6" {
 }
 
 test "get is true for a set index" {
-    var matrix = try Matrix.init(10);
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var matrix = try Matrix.init(10, allocator);
     defer matrix.deinit();
 
     var index = Index.create(0, 0);
